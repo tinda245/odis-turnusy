@@ -15,7 +15,7 @@ VYSTUPNI_SOUBOR = "turnusy_hotovo.csv"
 DIAGNOSTIKA_SOUBOR = "ukazka_dat.json"
 DB_SOUBOR = "odis_data.db"
 
-URL = "https://mpvnet.cz/odis/map/mapData"
+URL = "https://mpvnet.cz/odis/map"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
     "Content-Type": "application/json; charset=UTF-8",
