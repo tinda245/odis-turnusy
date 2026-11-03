@@ -1,10 +1,10 @@
 name: 24h Sledovani ODIS
 
 on:
-  workflow_dispatch: # Umožní spuštění jedním tlačítkem
+  workflow_dispatch:
 
 permissions:
-  contents: write # Povolí skriptu ukládat výslednou tabulku zpět do vašeho účtu
+  contents: write
 
 jobs:
   blok_1_hodiny_0_az_6:
@@ -15,7 +15,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install requests
+      - run: pip install playwright && playwright install chromium
       - run: python sledovani.py
 
   blok_2_hodiny_6_az_12:
@@ -28,7 +28,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install requests
+      - run: pip install playwright && playwright install chromium
       - run: python sledovani.py
 
   blok_3_hodiny_12_az_18:
@@ -41,7 +41,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install requests
+      - run: pip install playwright && playwright install chromium
       - run: python sledovani.py
 
   blok_4_hodiny_18_az_24:
@@ -54,5 +54,5 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install requests
+      - run: pip install playwright && playwright install chromium
       - run: python sledovani.py
