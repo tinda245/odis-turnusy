@@ -70,23 +70,28 @@ def uloz_na_github(zprava):
         print(f"Chyba při ukládání na GitHub: {e}")
 
 
-def najdi_seznam_vozidel(data):
-    """Prohledá JSON odpověď a vrátí seznam objektů představujících vozidla."""
-    if isinstance(data, list):
-        return [x for x in data if isinstance(x, dict)]
-    if isinstance(data, dict):
-        nejlepsi_seznam = []
-        for hodnota in data.values():
-            if isinstance(hodnota, list) and len(hodnota) > len(nejlepsi_seznam):
-                if len(hodnota) > 0 and isinstance(hodnota[0], dict):
-                    nejlepsi_seznam = hodnota
-        if nejlepsi_seznam:
-            return nejlepsi_seznam
-        # Pokud jsou vozidla uložena jako slovník slovníků
-        Slovníky = [v for v in data.values() if isinstance(v, dict)]
-        if len(Slovníky) > 3:
-            return Slovníky
-    return []
+def extrahuj_vozy_z_objektu(obj):
+    """Rekurzivně prohledá jakoukoliv JSON strukturu a vytáhne objekty, které vypadají jako autobus."""
+    nalezeno = []
+
+    def hledej(o):
+        if isinstance(o, dict):
+            # Pokud objekt obsahuje linku / spoj nebo pozici vozidla
+            ma_linku = any(k in o for k in ("line", "linka", "l", "route", "ln", "lineName"))
+            ma_spoj = any(k in o for k in ("conn", "spoj", "cn", "trip", "c", "course"))
+            ma_vuz = any(k in o for k in ("id", "reg", "rz", "vId", "evc", "car", "label", "num"))
+
+            if ma_linku and (ma_spoj or ma_vuz):
+                nalezeno.append(o)
+            else:
+                for v in o.values():
+                    hledej(v)
+        elif isinstance(o, list):
+            for polozka in o:
+                hledej(polozka)
+
+    hledej(obj)
+    return nalezeno
 
 
 def spust_automat():
@@ -98,36 +103,47 @@ def spust_automat():
     zachycene_odpovedi = []
 
     with sync_playwright() as p:
-        # Spustí neviditelný prohlížeč s velkou obrazovkou (4K), aby mapa obsáhla celý kraj
         browser = p.chromium.launch(headless=True)
-        context = browser.new_context(viewport={"width": 3840, "height": 2160})
+        context = browser.new_context(
+            viewport={"width": 1920, "height": 1080},
+            locale="cs-CZ",
+            timezone_id="Europe/Prague"
+        )
         page = context.new_page()
 
-        def pri_odpovedi(response):
+        def zachyt_odpoved(response):
             try:
-                if response.status == 200 and (
-                    "mapData" in response.url
-                    or response.request.resource_type in ("xhr", "fetch")
-                ):
+                content_type = response.headers.get("content-type", "")
+                if "json" in content_type or "javascript" in content_type:
                     text = response.text()
                     if text and (text.strip().startswith("{") or text.strip().startswith("[")):
-                        data = json.loads(text)
-                        zachycene_odpovedi.append({
-                            "url": response.url,
-                            "dotaz_payload": response.request.post_data,
-                            "data": data
-                        })
+                        d = json.loads(text)
+                        zachycene_odpovedi.append({"url": response.url, "data": d})
             except Exception:
                 pass
 
-        page.on("response", pri_odpovedi)
+        page.on("response", zachyt_odpoved)
 
-        print("Otevírám mapu ODIS v prohlížeči...")
+        print("Načítám mapu ODIS...")
         try:
-            page.goto(MAPA_URL, wait_until="domcontentloaded", timeout=60000)
-            page.wait_for_timeout(8000)
+            page.goto(MAPA_URL, wait_until="networkidle", timeout=60000)
+            page.wait_for_timeout(5000)
+
+            # Odklikneme případné cookies nebo potvrzovací okno
+            for selector in ["button:has-text('Souhlasím')", "button:has-text('Rozumím')", ".cookie-accept"]:
+                try:
+                    if page.is_visible(selector, timeout=2000):
+                        page.click(selector)
+                        print("Potvrzen dialog.")
+                except Exception:
+                    pass
+
+            # Simulujeme pohyb v mapě (zoom dovnitř/ven), aby se vyžádalo načtení vozů
+            page.mouse.wheel(0, -300)
+            page.wait_for_timeout(3000)
+
         except Exception as e:
-            print(f"Upozornění při načítání stránky: {e}")
+            print(f"Upozornění při startu stránky: {e}")
 
         for i in range(pocet_cyklu):
             nyni = datetime.now(ZoneInfo("Europe/Prague"))
@@ -135,22 +151,23 @@ def spust_automat():
             cas_str = nyni.strftime("%H:%M:%S")
 
             try:
-                # Pokud mapa sama neposlala nová data, obnovíme ji
-                if not zachycene_odpovedi:
-                    page.reload(wait_until="domcontentloaded", timeout=60000)
-                    page.wait_for_timeout(7000)
+                # Drobný pohyb myší na mapě každé kolo, aby server věděl, že uživatel žije
+                page.mouse.move(500 + (i % 50), 400 + (i % 50))
+                page.wait_for_timeout(2000)
 
                 zaznamenano = 0
                 while zachycene_odpovedi:
-                    polozka = zachycene_odpovedi.pop(0)
-                    data = polozka["data"]
+                    balicek = zachycene_odpovedi.pop(0)
+                    url = balicek["url"]
+                    data = balicek["data"]
 
-                    # Uložení prvního zachyceného JSONu pro kontrolu struktury
-                    if not os.path.exists(DIAGNOSTIKA_SOUBOR):
+                    # Uložíme si ukázku prvního smysluplného JSONu, ať vidíme strukturu
+                    if not os.path.exists(DIAGNOSTIKA_SOUBOR) and ("map" in url or "data" in url):
                         with open(DIAGNOSTIKA_SOUBOR, "w", encoding="utf-8") as f:
-                            json.dump(polozka, f, ensure_ascii=False, indent=2)
+                            json.dump(balicek, f, ensure_ascii=False, indent=2)
 
-                    vozidla = najdi_seznam_vozidel(data)
+                    vozidla = extrahuj_vozy_z_objektu(data)
+
                     for idx, v in enumerate(vozidla):
                         vuz_id = str(
                             v.get("id") or v.get("reg") or v.get("rz") or v.get("vId")
@@ -179,7 +196,7 @@ def spust_automat():
                 vyexportuj_turnusy_do_csv(conn)
                 print(f"[{cas_str}] Cyklus {i+1}/{pocet_cyklu}: Zpracováno {zaznamenano} záznamů vozů.")
 
-                # Uloží na GitHub hned po 1. cyklu (pro okamžitou kontrolu) a pak každých 15 minut
+                # Uložení na GitHub po prvním cyklu a pak každých 15 minut
                 if i == 0 or (i + 1) % ulozit_kazdych_cyklu == 0:
                     uloz_na_github(f"Aktualizace turnusů ({cas_str})")
 
@@ -190,7 +207,7 @@ def spust_automat():
 
         browser.close()
 
-    uloz_na_github("Uložení po dokončení 6h bloku")
+    uloz_na_github("Uložení po dokončení bloku")
     conn.close()
 
 
